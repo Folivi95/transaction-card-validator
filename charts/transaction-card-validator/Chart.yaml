@@ -1,0 +1,7 @@
+apiVersion: v2
+name: transaction-card-validator
+description: Chart for deploying transaction-card-validator service
+
+type: application
+version: 0.3.18
+appVersion: 0.3.18

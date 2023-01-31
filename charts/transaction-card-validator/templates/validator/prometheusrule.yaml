@@ -1,0 +1,55 @@
+{{- if .Values.validator.serviceMonitor.enabled -}}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ default "transaction-card-validator" .Values.validator.serviceAccount.name }}
+  namespace: "acquiring-host"
+spec:
+  groups:
+    - name: alerts
+      rules:
+        - alert: TransactionsCardValidatorWay4EgressDocErrorLogsFound
+          annotations:
+            message: >-
+              Error found on log stream
+          expr: |
+            sum by (service, namespace) (increase(app_error_log_entries{container="transaction-card-validator-way4-egress-doc"}[2m])) > {{ .Values.alerts.anyError.threshold }}
+          labels:
+            team: acquiring
+            severity: error
+        - alert: TransactionsCardValidatorWay4IngressDocErrorLogsFound
+          annotations:
+            message: >-
+              Error found on log stream
+          expr: |
+            sum by (service, namespace) (increase(app_error_log_entries{container="transaction-card-validator-way4-ingress-doc"}[2m])) > {{ .Values.alerts.anyError.threshold }}
+          labels:
+            team: acquiring
+            severity: error
+        - alert: TransactionsCardValidatorWay4IngressRateDrop
+          labels:
+            tki: {{ include "transaction-card-validator.fullname" . }}
+          annotations: 
+            message: >-
+              Way4 Ingress Rate Drop below threshold
+          expr: |
+              sum by (service, namespace) (rate(ingress_topic_counter{container="transaction-card-validator-way4-ingress-doc"}[5m])) <= {{ .Values.validator.alerts.anyError.rateLowerLimit }}
+        - alert: TransactionCardValidatorSolarIngressAfterinvoiceissuingErrorLogsFound
+          annotations:
+            message: >-
+              Error found on log stream
+          expr: |
+            sum by (service, namespace) (increase(app_error_log_entries{container="transaction-card-validator-solar-ingress-afterinvoiceissuing"}[5m])) > {{ .Values.alerts.anyError.threshold }}
+          labels:
+            team: acquiring
+            severity: error
+        - alert: TransactionCardValidatorSolarIngressAfterinvoiceissuingSchemaValidationFailed
+          annotations:
+            message: >-
+              Schema registry validation failed
+          expr: |
+            sum by (service, namespace) (increase(egress_topic_counter{container="transaction-card-validator-solar-ingress-afterinvoiceissuing",status="failed"}[5m])) > {{ .Values.alerts.anyError.threshold }}
+          labels:
+            team: acquiring
+            severity: error
+  {{- end }}

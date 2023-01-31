@@ -1,0 +1,19 @@
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: {{ default "transaction-card-validator" .Values.validator.serviceAccount.name }}
+  namespace: "acquiring-host"
+spec:
+  receivers:
+    - name: slack
+      slackConfigs:
+        - apiURL:
+            name: transaction-card-validator-slack-app
+            key: slack_url
+  route:
+    groupBy:
+      - alertname
+    matchers:
+      - name: tki
+        value: {{ include "transaction-card-validator.fullname" . }}
+    receiver: slack

@@ -1,0 +1,49 @@
+environment: ~
+
+validator:
+  logs:
+    level: "warn"
+    audit_log_fields: "id,publisher,exchange"  # Which message fields to log when a message fails business validation
+  fullnameOverride: "transaction-card-validator"
+  serviceAccount:
+    create: false
+    name: "transaction-card-validator"
+
+  service:
+    type: ClusterIP
+    port: 8080
+    health:
+      live: /internal/health_check
+      ready: /internal/health_check
+
+  image:
+    repository: ~
+    tag: ~
+    pullPolicy: IfNotPresent
+
+  resources:
+    limits:
+      cpu: 1
+      memory: 512Mi
+    requests:
+      cpu: 1
+      memory: 256Mi
+
+  serviceMonitor:
+    enabled: true
+    interval: 30s
+
+  pdb:
+    enabled: true
+    maxUnavailable: 1
+
+  alerts:
+    anyError:
+      rateLowerLimit: 0
+
+deployment:
+  local: false
+
+alerts:
+  anyError:
+    threshold: 0

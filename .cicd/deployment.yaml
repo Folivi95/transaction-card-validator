@@ -1,0 +1,544 @@
+helm:
+  chart: transaction-card-validator
+  version: 0.4.114
+  values: |
+    environment: {{ .Environment }}
+    validator:
+      image:
+      {{- with .ContainerImages.GetContainerImageByProvenance "build-push-image" }}
+        repository: {{ .Registry }}
+        tag: {{ index .Tags 1 }}@{{ .Digest }}
+      {{- end }}
+
+    affinity:
+      podAntiAffinity:
+        preferredDuringSchedulingIgnoredDuringExecution:
+          - podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                  - key: app.kubernetes.io/part-of
+                    operator: In
+                    values:
+                      - {{ .TKI }}
+              topologyKey: topology.kubernetes.io/zone
+            weight: 100
+          - podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                  - key: app.kubernetes.io/part-of
+                    operator: In
+                    values:
+                      - {{ .TKI }}
+              topologyKey: kubernetes.io/hostname
+            weight: 90
+
+    topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: topology.kubernetes.io/zone
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app.kubernetes.io/part-of: {{ .TKI }}
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app.kubernetes.io/part-of: {{ .TKI }}
+
+  overrides:
+    - environment: dev
+      scope: cde
+      region: eu-west-1
+      values: |
+        validator:
+          alerts:
+            anyError:
+              rateLowerLimit: 0
+          services:
+            - name: way4-ingress-doc
+              replicaCount: 3
+              ingress_topic: transaction-card-validator-ogg-way4-raw-doc
+              ingress_msk_secret: transaction-card-validator-msk-eventstreaming
+              egress_topic: transaction-card-validator-ogg-way4-validated-doc
+              egress_msk_secret: transaction-card-validator-msk-eventstreaming
+              s3_bucket: transactions-way4-quarantine
+              card_hold_keys: SOURCE_NUMBER,TARGET_NUMBER
+              schema:
+                registryEndpoint: https://arch-artifacts-schemaregistry.cde-dev.eu-west-1.salt
+                refreshIntervalSeconds: 300
+                subjectName: env-way4_raw_transaction-v1
+              customEnv: {}
+            - name: solar-ingress-afterinvoiceissuing
+              replicaCount: 3    
+              ingress_topic: saltdata-kafka-connect-solar-raw-afterInvoiceIssuing
+              ingress_msk_secret: transaction-card-validator-msk-eventstreaming
+              egress_topic: transaction-card-validator-solar-validated-afterInvoiceIssuing                            
+              egress_msk_secret: transaction-card-validator-msk-eventstreaming-platform
+              s3_bucket: transactions-solar-quarantine
+              card_hold_keys: ""
+              skip_validation: false
+              pause_processing: false
+              schema:
+                registryEndpoint: https://arch-artifacts-schemaregistry.cde-dev.eu-west-1.salt
+                refreshIntervalSeconds: 300
+                subjectName: ent-solar_payout_instruction_raw-v2
+              customEnv: {}
+            - name: reconciliation-canonical
+              replicaCount: 3    
+              ingress_topic: acquiring-reconciliation-handler-reconciliation-canonical
+              ingress_msk_secret: transaction-card-validator-msk-eventstreaming
+              egress_topic: transaction-card-validator-reconciliation-canonical                      
+              egress_msk_secret: transaction-card-validator-msk-eventstreaming-platform
+              s3_bucket: reconciliation-solar-quarantine
+              card_hold_keys: ""
+              skip_validation: false
+              pause_processing: false
+              schema:
+                registryEndpoint: https://arch-artifacts-schemaregistry.cde-dev.eu-west-1.salt
+                refreshIntervalSeconds: 300
+                subjectName: ent-reconciliation-v1
+              customEnv: {}
+            - name: way4-egress-doc
+              replicaCount: 3
+              ingress_topic: sally-card-tokenizer-ogg-way4-tokenized-doc
+              ingress_msk_secret: transaction-card-validator-msk-eventstreaming
+              egress_topic: transaction-api-operational-ogg-way4-curated-doc
+              egress_msk_secret: transaction-card-validator-msk-eventstreaming-platform
+              s3_bucket: transactions-way4-quarantine
+              card_hold_keys: SOURCE_NUMBER,TARGET_NUMBER
+              business_validation: Way4MaskedCardNumber
+              pause_processing: false
+              schema:
+                registryEndpoint: https://arch-artifacts-schemaregistry.cde-dev.eu-west-1.salt
+                refreshIntervalSeconds: 300
+                subjectName: env-way4_curated_transaction-v1
+              customEnv:
+                W4_MASKED_CHD_KEYS: SOURCE_NUMBER,TARGET_NUMBER
+                W4_MASKED_REGEX_PATTERN: "^[0-9]{6}(\\*+)[0-9]{4}$"
+
+            # PGateway 1: integrations-events-integrations-providerrequest
+            - name: integrations-providerrequest
+              replicaCount: 1
+              ingress_topic: saltdata-kafka-connect-integrations-events-integrations-providerrequest
+              ingress_msk_secret: transaction-card-validator-msk-eventstreaming
+              egress_topic: pgateway-event-sourcing-integrations-events-integrations-providerrequest
+              egress_msk_secret: transaction-card-validator-msk-eventstreaming-platform
+              s3_bucket: pgateway-quarantine-bucket
+              schema:
+                registryEndpoint: https://arch-artifacts-schemaregistry.cde-dev.eu-west-1.salt
+                refreshIntervalSeconds: 300
+                subjectName: ent-acquiring_gateway_integrations_provider_request-v1
+              customEnv: {}
+        
+            # PGateway 2: integrationsapi-events-integrations-uidauditlog
+            - name: integrations-uidauditlog
+              replicaCount: 1
+              ingress_topic: saltdata-kafka-connect-integrationsapi-events-integrations-uidauditlog
+              ingress_msk_secret: transaction-card-validator-msk-eventstreaming
+              egress_topic: pgateway-event-sourcing-integrationsapi-events-integrations-uidauditlog
+              egress_msk_secret: transaction-card-validator-msk-eventstreaming-platform
+              s3_bucket: pgateway-quarantine-bucket
+              schema:
+                registryEndpoint: https://arch-artifacts-schemaregistry.cde-dev.eu-west-1.salt
+                refreshIntervalSeconds: 300
+                subjectName: env-acquiring_gateway_integrations_api_uid_audit_log-v1
+              customEnv: {}
+        
+            # PGateway 3: lifecycle-events-lifecycle-event
+            - name: lifecycle-event
+              replicaCount: 3
+              ingress_topic: saltdata-kafka-connect-lifecycle-events-lifecycle-event
+              ingress_msk_secret: transaction-card-validator-msk-eventstreaming
+              egress_topic: pgateway-event-sourcing-lifecycle-events-lifecycle-event
+              egress_msk_secret: transaction-card-validator-msk-eventstreaming-platform
+              s3_bucket: pgateway-quarantine-bucket
+              business_validation: PGatewayValidation
+              schema:
+                registryEndpoint: https://arch-artifacts-schemaregistry.cde-dev.eu-west-1.salt
+                refreshIntervalSeconds: 300
+                subjectName: env-acquiring_gateway_lifecycle_event-v2
+              customEnv: {}
+        
+            # PGateway 4: merchantapi-events-merchantapi-userauditlog
+            - name: merchantapi-userauditlog
+              replicaCount: 1
+              ingress_topic: saltdata-kafka-connect-merchantapi-events-merchantapi-userauditlog
+              ingress_msk_secret: transaction-card-validator-msk-eventstreaming
+              egress_topic: pgateway-event-sourcing-merchantapi-events-merchantapi-userauditlog
+              egress_msk_secret: transaction-card-validator-msk-eventstreaming-platform
+              s3_bucket: pgateway-quarantine-bucket
+              schema:
+                registryEndpoint: https://arch-artifacts-schemaregistry.cde-dev.eu-west-1.salt
+                refreshIntervalSeconds: 300
+                subjectName: env-acquiring_gateway_merchant_api_user_audit_log-v2
+              customEnv: {}
+        
+            # PGateway 5: merchantapi-events-merchantapi-authorizationgroupauditlog
+            - name: merchantapi-authorizationglog
+              replicaCount: 1
+              ingress_topic: saltdata-kafka-connect-merchantapi-events-merchantapi-authorizationgroupauditlog
+              ingress_msk_secret: transaction-card-validator-msk-eventstreaming
+              egress_topic: pgateway-event-sourcing-merchantapi-events-merchantapi-authorizationgroupauditlog
+              egress_msk_secret: transaction-card-validator-msk-eventstreaming-platform
+              s3_bucket: pgateway-quarantine-bucket
+              schema:
+                registryEndpoint: https://arch-artifacts-schemaregistry.cde-dev.eu-west-1.salt
+                refreshIntervalSeconds: 300
+                subjectName: env-acquiring_gateway_merchant_api_authorization_group_audit_log-v1
+              customEnv: {}
+        
+            # PGateway 6: merchantapi-events-merchantapi-merchantauditlog
+            - name: merchantapi-merchantauditlog
+              replicaCount: 1
+              ingress_topic: saltdata-kafka-connect-merchantapi-events-merchantapi-merchantauditlog
+              ingress_msk_secret: transaction-card-validator-msk-eventstreaming
+              egress_topic: pgateway-event-sourcing-merchantapi-events-merchantapi-merchantauditlog
+              egress_msk_secret: transaction-card-validator-msk-eventstreaming-platform
+              s3_bucket: pgateway-quarantine-bucket
+              schema:
+                registryEndpoint: https://arch-artifacts-schemaregistry.cde-dev.eu-west-1.salt
+                refreshIntervalSeconds: 300
+                subjectName: env-acquiring_gateway_merchant_api_merchant_audit_log-v1
+              customEnv: {}
+        
+            # PGateway 7: merchantapi-events-merchantapi-apikeyauditlog
+            - name: merchantapi-apikeyauditlog
+              replicaCount: 1
+              ingress_topic: saltdata-kafka-connect-merchantapi-events-merchantapi-apikeyauditlog
+              ingress_msk_secret: transaction-card-validator-msk-eventstreaming
+              egress_topic: pgateway-event-sourcing-merchantapi-events-merchantapi-apikeyauditlog
+              egress_msk_secret: transaction-card-validator-msk-eventstreaming-platform
+              s3_bucket: pgateway-quarantine-bucket
+              schema:
+                registryEndpoint: https://arch-artifacts-schemaregistry.cde-dev.eu-west-1.salt
+                refreshIntervalSeconds: 300
+                subjectName: env-acquiring_gateway_merchant_api_api_key_audit_log-v1
+              customEnv: {}
+        
+            # PGateway 8: merchantapi-events-merchantapi-bankaccountauditlog
+            - name: merchantapi-bankaccountauditlog
+              replicaCount: 1
+              ingress_topic: saltdata-kafka-connect-merchantapi-events-merchantapi-bankaccountauditlog
+              ingress_msk_secret: transaction-card-validator-msk-eventstreaming
+              egress_topic: pgateway-event-sourcing-merchantapi-events-merchantapi-bankaccountauditlog
+              egress_msk_secret: transaction-card-validator-msk-eventstreaming-platform
+              s3_bucket: pgateway-quarantine-bucket
+              schema:
+                registryEndpoint: https://arch-artifacts-schemaregistry.cde-dev.eu-west-1.salt
+                refreshIntervalSeconds: 300
+                subjectName: env-acquiring_gateway_merchant_api_bank_account_audit_log-v1
+              customEnv: {}
+        
+            # PGateway 9: newtransactionsapi-events-newtransactionsapi-transaction
+            - name: newtransactionsapi-transaction
+              replicaCount: 1
+              ingress_topic: saltdata-kafka-connect-newtransactionsapi-events-newtransactionsapi-transaction
+              ingress_msk_secret: transaction-card-validator-msk-eventstreaming
+              egress_topic: pgateway-event-sourcing-newtransactionsapi-events-newtransactionsapi-transaction
+              egress_msk_secret: transaction-card-validator-msk-eventstreaming-platform
+              s3_bucket: pgateway-quarantine-bucket
+              business_validation: PGatewayValidation
+              schema:
+                registryEndpoint: https://arch-artifacts-schemaregistry.cde-dev.eu-west-1.salt
+                refreshIntervalSeconds: 300
+                subjectName: env-acquiring_gateway_new_transactions_api_transaction-v1
+              customEnv: {}
+        
+            # PGateway 10: newtransactionsapi-events-newtransactionsapi-transactionauditlog
+            - name: newtransactionsapi-transactionalog
+              replicaCount: 1
+              ingress_topic: saltdata-kafka-connect-newtransactionsapi-events-newtransactionsapi-transactionauditlog
+              ingress_msk_secret: transaction-card-validator-msk-eventstreaming
+              egress_topic: pgateway-event-sourcing-newtransactionsapi-events-newtransactionsapi-transactionauditlog
+              egress_msk_secret: transaction-card-validator-msk-eventstreaming-platform
+              s3_bucket: pgateway-quarantine-bucket
+              business_validation: PGatewayValidation
+              schema:
+                registryEndpoint: https://arch-artifacts-schemaregistry.cde-dev.eu-west-1.salt
+                refreshIntervalSeconds: 300
+                subjectName: env-acquiring_gateway_new_transactions_api_transaction_audit_log-v1
+              customEnv: {}
+        
+            # PGateway 11: switchapi-events-processingapi-chargeauditlog
+            - name: processingapi-chargeauditlog
+              replicaCount: 1
+              ingress_topic: saltdata-kafka-connect-switchapi-events-processingapi-chargeauditlog
+              ingress_msk_secret: transaction-card-validator-msk-eventstreaming
+              egress_topic: pgateway-event-sourcing-switchapi-events-processingapi-chargeauditlog
+              egress_msk_secret: transaction-card-validator-msk-eventstreaming-platform
+              s3_bucket: pgateway-quarantine-bucket
+              business_validation: PGatewayValidation
+              schema:
+                registryEndpoint: https://arch-artifacts-schemaregistry.cde-dev.eu-west-1.salt
+                refreshIntervalSeconds: 300
+                subjectName: env-acquiring_gateway_processing_api_charge_audit_log-v1
+              customEnv: {}
+        
+            # PGateway 12: switchapi-events-processingapi-merchantkeyauditlog
+            - name: processingapi-merchantkeyauditlog
+              replicaCount: 1
+              ingress_topic: saltdata-kafka-connect-switchapi-events-processingapi-merchantkeyauditlog
+              ingress_msk_secret: transaction-card-validator-msk-eventstreaming
+              egress_topic: pgateway-event-sourcing-switchapi-events-processingapi-merchantkeyauditlog
+              egress_msk_secret: transaction-card-validator-msk-eventstreaming-platform
+              s3_bucket: pgateway-quarantine-bucket
+              schema:
+                registryEndpoint: https://arch-artifacts-schemaregistry.cde-dev.eu-west-1.salt
+                refreshIntervalSeconds: 300
+                subjectName: env-acquiring_gateway_processing_api_merchant_key_audit_log-v1
+              customEnv: {}
+        
+            # PGateway 13: switchapi-events-processingapi-processormerchantauditlog
+            - name: processingapi-processormauditlog
+              replicaCount: 1
+              ingress_topic: saltdata-kafka-connect-switchapi-events-processingapi-processormerchantauditlog
+              ingress_msk_secret: transaction-card-validator-msk-eventstreaming
+              egress_topic: pgateway-event-sourcing-switchapi-events-processingapi-processormerchantauditlog
+              egress_msk_secret: transaction-card-validator-msk-eventstreaming-platform
+              s3_bucket: pgateway-quarantine-bucket
+              schema:
+                registryEndpoint: https://arch-artifacts-schemaregistry.cde-dev.eu-west-1.salt
+                refreshIntervalSeconds: 300
+                subjectName: env-acquiring_gateway_processing_api_processor_merchant_audit_log-v1
+              customEnv: {}
+        
+            # PGateway 14: switchapi-events-processingapi-merchant
+            - name: processingapi-merchant
+              replicaCount: 1
+              ingress_topic: saltdata-kafka-connect-switchapi-events-processingapi-merchant
+              ingress_msk_secret: transaction-card-validator-msk-eventstreaming
+              egress_topic: pgateway-event-sourcing-switchapi-events-processingapi-merchant
+              egress_msk_secret: transaction-card-validator-msk-eventstreaming-platform
+              s3_bucket: pgateway-quarantine-bucket
+              schema:
+                registryEndpoint: https://arch-artifacts-schemaregistry.cde-dev.eu-west-1.salt
+                refreshIntervalSeconds: 300
+                subjectName: env-acquiring_gateway_processing_api_merchant-v1
+              customEnv: {}
+        
+            # PGateway 15: switchapi-events-processingapi-merchantkey
+            - name: processingapi-merchantkey
+              replicaCount: 1
+              ingress_topic: saltdata-kafka-connect-switchapi-events-processingapi-merchantkey
+              ingress_msk_secret: transaction-card-validator-msk-eventstreaming
+              egress_topic: pgateway-event-sourcing-switchapi-events-processingapi-merchantkey
+              egress_msk_secret: transaction-card-validator-msk-eventstreaming-platform
+              s3_bucket: pgateway-quarantine-bucket
+              schema:
+                registryEndpoint: https://arch-artifacts-schemaregistry.cde-dev.eu-west-1.salt
+                refreshIntervalSeconds: 300
+                subjectName: ent-acquiring_gateway_processing_api_merchant_key-v1
+              customEnv: {}
+        
+            # PGateway 16: switchapi-events-processingapi-processormerchant
+            - name: processingapi-processormerchant
+              replicaCount: 1
+              ingress_topic: saltdata-kafka-connect-switchapi-events-processingapi-processormerchant
+              ingress_msk_secret: transaction-card-validator-msk-eventstreaming
+              egress_topic: pgateway-event-sourcing-switchapi-events-processingapi-processormerchant
+              egress_msk_secret: transaction-card-validator-msk-eventstreaming-platform
+              s3_bucket: pgateway-quarantine-bucket
+              schema:
+                registryEndpoint: https://arch-artifacts-schemaregistry.cde-dev.eu-west-1.salt
+                refreshIntervalSeconds: 300
+                subjectName: env-acquiring_gateway_processing_api_processor_merchant-v1
+              customEnv: {}
+        
+            # PGateway 17: switchapi-events-processingapi-paymentauditlog
+            - name: processingapi-paymentauditlog
+              replicaCount: 1
+              ingress_topic: saltdata-kafka-connect-switchapi-events-processingapi-paymentauditlog
+              ingress_msk_secret: transaction-card-validator-msk-eventstreaming
+              egress_topic: pgateway-event-sourcing-switchapi-events-processingapi-paymentauditlog
+              egress_msk_secret: transaction-card-validator-msk-eventstreaming-platform
+              s3_bucket: pgateway-quarantine-bucket
+              schema:
+                registryEndpoint: https://arch-artifacts-schemaregistry.cde-dev.eu-west-1.salt
+                refreshIntervalSeconds: 300
+                subjectName: env-acquiring_gateway_processing_api_payment_audit_log-v1
+              customEnv: {}
+        
+            # PGateway 18: switchapi-events-processingapi-paymentprocessor
+            - name: processingapi-paymentprocessor
+              replicaCount: 1
+              ingress_topic: saltdata-kafka-connect-switchapi-events-processingapi-paymentprocessor
+              ingress_msk_secret: transaction-card-validator-msk-eventstreaming
+              egress_topic: pgateway-event-sourcing-switchapi-events-processingapi-paymentprocessor
+              egress_msk_secret: transaction-card-validator-msk-eventstreaming-platform
+              s3_bucket: pgateway-quarantine-bucket
+              schema:
+                registryEndpoint: https://arch-artifacts-schemaregistry.cde-dev.eu-west-1.salt
+                refreshIntervalSeconds: 300
+                subjectName: ent-acquiring_gateway_processing_api_payment_processor-v1
+              customEnv: {}
+        
+            # PGateway 19: switchapi-events-processingapi-hsmprocessor
+            - name: processingapi-hsmprocessor
+              replicaCount: 1
+              ingress_topic: saltdata-kafka-connect-switchapi-events-processingapi-hsmprocessor
+              ingress_msk_secret: transaction-card-validator-msk-eventstreaming
+              egress_topic: pgateway-event-sourcing-switchapi-events-processingapi-hsmprocessor
+              egress_msk_secret: transaction-card-validator-msk-eventstreaming-platform
+              s3_bucket: pgateway-quarantine-bucket
+              schema:
+                registryEndpoint: https://arch-artifacts-schemaregistry.cde-dev.eu-west-1.salt
+                refreshIntervalSeconds: 300
+                subjectName: ent-acquiring_gateway_processing_api_hsm_processor-v1
+              customEnv: {}
+        
+            # PGateway 20: switchapi-events-processingapi-refundauditlog
+            - name: processingapi-refundauditlog
+              replicaCount: 1
+              ingress_topic: saltdata-kafka-connect-switchapi-events-processingapi-refundauditlog
+              ingress_msk_secret: transaction-card-validator-msk-eventstreaming
+              egress_topic: pgateway-event-sourcing-switchapi-events-processingapi-refundauditlog
+              egress_msk_secret: transaction-card-validator-msk-eventstreaming-platform
+              s3_bucket: pgateway-quarantine-bucket
+              schema:
+                registryEndpoint: https://arch-artifacts-schemaregistry.cde-dev.eu-west-1.salt
+                refreshIntervalSeconds: 300
+                subjectName: env-acquiring_gateway_processing_api_refund_audit_log-v1
+              customEnv: {}
+        
+            # PGateway 21: switchapi-events-processingapi-reversalauditlog
+            - name: processingapi-reversalauditlog
+              replicaCount: 1
+              ingress_topic: saltdata-kafka-connect-switchapi-events-processingapi-reversalauditlog
+              ingress_msk_secret: transaction-card-validator-msk-eventstreaming
+              egress_topic: pgateway-event-sourcing-switchapi-events-processingapi-reversalauditlog
+              egress_msk_secret: transaction-card-validator-msk-eventstreaming-platform
+              s3_bucket: pgateway-quarantine-bucket
+              schema:
+                registryEndpoint: https://arch-artifacts-schemaregistry.cde-dev.eu-west-1.salt
+                refreshIntervalSeconds: 300
+                subjectName: env-acquiring_gateway_processing_api_reversal_audit_log-v1
+              customEnv: {}
+        
+            # PGateway 22: switchapi-events-processingapi-routingruleauditlog
+            - name: processingapi-routingruleauditlog
+              replicaCount: 1
+              ingress_topic: saltdata-kafka-connect-switchapi-events-processingapi-routingruleauditlog
+              ingress_msk_secret: transaction-card-validator-msk-eventstreaming
+              egress_topic: pgateway-event-sourcing-switchapi-events-processingapi-routingruleauditlog
+              egress_msk_secret: transaction-card-validator-msk-eventstreaming-platform
+              s3_bucket: pgateway-quarantine-bucket
+              schema:
+                registryEndpoint: https://arch-artifacts-schemaregistry.cde-dev.eu-west-1.salt
+                refreshIntervalSeconds: 300
+                subjectName: env-acquiring_gateway_processing_api_routing_rule_audit_log-v1
+              customEnv: {}
+        
+            # PGateway 23: switchapi-events-processingapi-webhook
+            - name: processingapi-webhook
+              replicaCount: 1
+              ingress_topic: saltdata-kafka-connect-switchapi-events-processingapi-webhook
+              ingress_msk_secret: transaction-card-validator-msk-eventstreaming
+              egress_topic: pgateway-event-sourcing-switchapi-events-processingapi-webhook
+              egress_msk_secret: transaction-card-validator-msk-eventstreaming-platform
+              s3_bucket: pgateway-quarantine-bucket
+              schema:
+                registryEndpoint: https://arch-artifacts-schemaregistry.cde-dev.eu-west-1.salt
+                refreshIntervalSeconds: 300
+                subjectName: env-acquiring_gateway_processing_api_webhook-v1
+              customEnv: {}
+        
+            # PGateway 24: switchapi-events-processingapi-routingrule
+            - name: processingapi-routingrule
+              replicaCount: 1
+              ingress_topic: saltdata-kafka-connect-switchapi-events-processingapi-routingrule
+              ingress_msk_secret: transaction-card-validator-msk-eventstreaming
+              egress_topic: pgateway-event-sourcing-switchapi-events-processingapi-routingrule
+              egress_msk_secret: transaction-card-validator-msk-eventstreaming-platform
+              s3_bucket: pgateway-quarantine-bucket
+              schema:
+                registryEndpoint: https://arch-artifacts-schemaregistry.cde-dev.eu-west-1.salt
+                refreshIntervalSeconds: 300
+                subjectName: env-acquiring_gateway_processing_api_routing_rule-v1
+              customEnv: {}
+        
+            # PGateway 25: switchapi-events-eventsourcing-event
+            - name: eventsourcing-event
+              replicaCount: 1
+              ingress_topic: saltdata-kafka-connect-switchapi-events-eventsourcing-event
+              ingress_msk_secret: transaction-card-validator-msk-eventstreaming
+              egress_topic: pgateway-event-sourcing-eventsourcing-event
+              egress_msk_secret: transaction-card-validator-msk-eventstreaming-platform
+              s3_bucket: pgateway-quarantine-bucket
+              schema:
+                registryEndpoint: https://arch-artifacts-schemaregistry.cde-dev.eu-west-1.salt
+                refreshIntervalSeconds: 300
+                subjectName: env-acquiring_gateway_event_sourcing_event-v1
+              customEnv: {}
+
+    - environment: prd
+      scope: cde
+      region: eu-west-1
+      values: |
+        validator:
+          alerts:
+            anyError:
+              rateLowerLimit: 3
+          services:
+            - name: way4-ingress-doc
+              replicaCount: 3
+              ingress_topic: transaction-card-validator-ogg-way4-raw-doc
+              ingress_msk_secret: transaction-card-validator-msk-eventstreaming
+              egress_topic: transaction-card-validator-ogg-way4-validated-doc
+              egress_msk_secret: transaction-card-validator-msk-eventstreaming
+              s3_bucket: transactions-way4-quarantine
+              card_hold_keys: SOURCE_NUMBER,TARGET_NUMBER
+              schema:
+                registryEndpoint: https://arch-artifacts-schemaregistry.cde-prd.eu-west-1.salt
+                refreshIntervalSeconds: 300
+                subjectName: env-way4_raw_transaction-v1
+              customEnv: {}
+            - name: way4-egress-doc
+              replicaCount: 3
+              ingress_topic: sally-card-tokenizer-ogg-way4-tokenized-doc
+              ingress_msk_secret: transaction-card-validator-msk-eventstreaming
+              egress_topic: transaction-api-operational-ogg-way4-curated-doc
+              egress_msk_secret: transaction-card-validator-msk-eventstreaming-platform
+              s3_bucket: transactions-way4-quarantine
+              card_hold_keys: SOURCE_NUMBER,TARGET_NUMBER
+              business_validation: Way4MaskedCardNumber
+              pause_processing: false
+              schema:
+                registryEndpoint: https://arch-artifacts-schemaregistry.cde-prd.eu-west-1.salt
+                refreshIntervalSeconds: 300
+                subjectName: env-way4_curated_transaction-v1
+              customEnv:
+                W4_MASKED_CHD_KEYS: SOURCE_NUMBER,TARGET_NUMBER
+                W4_MASKED_REGEX_PATTERN: "^[0-9]{6}(\\*+)[0-9]{4}$"
+              podAnnotations:
+                forceRestartCount: "2"
+            - name: reconciliation-canonical
+              replicaCount: 3    
+              ingress_topic: acquiring-reconciliation-handler-reconciliation-canonical
+              ingress_msk_secret: transaction-card-validator-msk-eventstreaming
+              egress_topic: transaction-card-validator-reconciliation-canonical                      
+              egress_msk_secret: transaction-card-validator-msk-eventstreaming-platform
+              s3_bucket: reconciliation-solar-quarantine
+              card_hold_keys: ""
+              skip_validation: false
+              pause_processing: false
+              schema:
+                registryEndpoint: https://arch-artifacts-schemaregistry.cde-prd.eu-west-1.salt
+                refreshIntervalSeconds: 300
+                subjectName: ent-reconciliation-v1
+              customEnv: {}
+            - name: solar-ingress-afterinvoiceissuing
+              replicaCount: 3    
+              ingress_topic: saltdata-kafka-connect-solar-raw-afterInvoiceIssuing
+              ingress_msk_secret: transaction-card-validator-msk-eventstreaming
+              egress_topic: transaction-card-validator-solar-validated-afterInvoiceIssuing                            
+              egress_msk_secret: transaction-card-validator-msk-eventstreaming-platform
+              s3_bucket: transactions-solar-quarantine
+              card_hold_keys: ""
+              skip_validation: false
+              pause_processing: false
+              schema:
+                registryEndpoint: https://arch-artifacts-schemaregistry.cde-prd.eu-west-1.salt
+                refreshIntervalSeconds: 300
+                subjectName: ent-solar_payout_instruction_raw-v2
+              customEnv: {}

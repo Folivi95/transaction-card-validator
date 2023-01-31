@@ -1,0 +1,18 @@
+{{- if .Values.validator.serviceMonitor.enabled -}}
+{{- range $validator := $.Values.validator.services }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "transaction-card-validator.name" $ }}-{{ $validator.name }}
+spec:
+  endpoints:
+    - interval: {{ $.Values.validator.serviceMonitor.interval }}
+      port: http
+      path: /internal/metrics
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "transaction-card-validator.name" $ }}-{{ $validator.name }}
+      app.kubernetes.io/instance: {{ $.Release.Name }}
+{{- end }}
+{{- end }}

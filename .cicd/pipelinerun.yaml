@@ -1,0 +1,163 @@
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  name: transaction-card-validator
+  labels:
+    team: acquiring
+spec:
+  serviceAccountNames:
+    - taskName: push
+      serviceAccountName: cicd
+    - taskName: push-helm-chart
+      serviceAccountName: cicd
+  workspaces:
+    - name: workspace
+      volumeClaimTemplate:
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 100Mi
+  pipelineSpec:
+    workspaces:
+      - name: workspace
+    tasks:
+      # Clone the source repo
+      - name: git-clone
+        taskRef:
+          name: git-clone
+          kind: ClusterTask
+        params:
+          - name: url
+            value: $(params.gitrepositoryurl)
+          - name: subdirectory
+            value: src
+          - name: revision
+            value: $(params.headsha)
+        workspaces:
+          - name: output
+            workspace: workspace
+      # runs linting against the service
+      - name: linting
+        runAfter:
+          - git-clone
+        workspaces:
+          - name: shared
+            workspace: workspace
+        taskSpec:
+          workspaces:
+            - name: shared
+          steps:
+            - name: linting
+              image: 011034701064.dkr.ecr.eu-west-1.amazonaws.com/infra-cicd-images:go-golanci-lint-latest
+              env:
+                - name: GOPATH
+                  value: $(workspaces.shared.path)/go
+              script: |
+                mkdir -p ${GOPATH}
+                cd $(workspaces.shared.path)/src
+                golangci-lint run --timeout=5m
+      # runs unit tests
+      - name: unit-tests
+        runAfter:
+          - git-clone
+          - add-vendor
+        workspaces:
+          - name: shared
+            workspace: workspace
+        taskSpec:
+          workspaces:
+            - name: shared
+          steps:
+            - name: unit-tests
+              image: public.ecr.aws/docker/library/golang
+              env:
+                - name: GOPATH
+                  value: $(workspaces.shared.path)/go
+              script: |
+                mkdir -p ${GOPATH}
+                cd $(workspaces.shared.path)/src
+                go test -shuffle=on --tags=unit ./...
+
+      - name: add-vendor
+        runAfter:
+          - git-clone
+        workspaces:
+          - name: shared
+            workspace: workspace
+        taskSpec:
+          workspaces:
+            - name: shared
+          steps:
+            - name: vendor
+              image: public.ecr.aws/docker/library/golang
+              env:
+                - name: GOPATH
+                  value: $(workspaces.shared.path)/go
+              script: |
+                mkdir -p ${GOPATH}
+                cd $(workspaces.shared.path)/src
+                go mod vendor
+      - name: build-push-image
+        taskRef:
+          name: build-push-image-v2
+          kind: ClusterTask
+        runAfter:
+          - add-vendor
+        workspaces:
+          - name: shared
+            workspace: workspace
+        params:
+          - name: imagename
+            value: transaction-card-validator
+          - name: tags
+            value:
+              - $(params.headsha)
+              - $(params.headref)
+          - name: contextpath
+            value: $(workspaces.shared.path)/src/
+      # Package and push Helm chart
+      - name: push-helm-chart
+        runAfter:
+          - git-clone
+        taskRef:
+          name: helm-generate-and-push
+          kind: ClusterTask
+        workspaces:
+          - name: shared
+            workspace: workspace
+        params:
+          - name: chart-name
+            value: transaction-card-validator
+          - name: chart-version
+            value: '0.4.114'
+          - name: push
+            value: $(params.merged)
+          - name: chart-location
+            value: charts/transaction-card-validator/
+          - name: lint
+            value: 'true'
+          - name: repo_dir
+            value: src/
+      - name: deploy
+        runAfter:
+          - push-helm-chart
+          - build-push-image
+        when:
+          - input: $(params.headref)
+            operator: in
+            values: ["master"]
+        taskRef:
+          name: deploy-app
+          kind: ClusterTask
+        params:
+          - name: tagname
+            value: $(params.headsha)
+          - name: git-clone-url
+            value: $(params.gitrepositoryurl)
+          - name: release-target
+            value: $(params.headsha)
+          # TODO: When we have multiple envs we probably want to enable this.
+          - name: rolling-deploy
+            value: "false"

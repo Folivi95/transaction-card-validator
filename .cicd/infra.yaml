@@ -1,0 +1,175 @@
+s3_buckets:
+  - name: "transactions-way4-quarantine-dev"
+    permissions:
+      - prefix: "*"
+        write: true
+        read: true
+    overrides:
+      - environment: dev
+        scope: cde
+        region: eu-west-1
+        name: "transactions-way4-quarantine-dev"
+      - environment: prd
+        scope: cde
+        region: eu-west-1
+        name: "transactions-way4-quarantine-prd"
+  - name: "transactions-solar-quarantine-dev"
+    permissions:
+      - prefix: "*"
+        write: true
+        read: true
+    overrides:
+      - environment: dev
+        scope: cde
+        region: eu-west-1
+        name: "transactions-solar-quarantine-dev"
+      - environment: prd
+        scope: cde
+        region: eu-west-1
+        name: "transactions-solar-quarantine-prd"
+  - name: "reconciliation-solar-quarantine-dev"
+    permissions:
+      - prefix: "*"
+        write: true
+        read: true
+    overrides:
+      - environment: dev
+        scope: cde
+        region: eu-west-1
+        name: "reconciliation-solar-quarantine-dev"
+      - environment: prd
+        scope: cde
+        region: eu-west-1
+        name: "reconciliation-solar-quarantine-prd"
+  - name: "pgateway-quarantine-bucket-dev"
+    permissions:
+      - prefix: "*"
+        write: true
+        read: true
+    overrides:
+      - environment: dev
+        scope: cde
+        region: eu-west-1
+        name: "pgateway-quarantine-bucket-dev"
+      - environment: prd
+        scope: cde
+        region: eu-west-1
+        name: "pgateway-quarantine-bucket-prd"
+
+kafka:
+  - cluster: "eventstreaming"
+    scope: "cde"
+    topics:
+      - name: "ogg-way4-raw-doc" # Name: transaction-card-validator-ogg-way4-raw-doc
+        partitions: 3
+        replication_factor: 3
+        retention_ms: 604800000 # 7 days
+        retention_bytes: -1 # No limit
+        consumers:
+          - name: "transaction-card-validator"
+            scope: "cde"
+        producers:
+          - name: "goldengate"
+            external: true
+      - name: "ogg-way4-dummy" # Name: transaction-card-validator-ogg-way4-dummy
+        partitions: 1
+        replication_factor: 2
+        retention_ms: 604800000 # 7 days
+        consumers:
+          - name: "transaction-card-validator"
+            scope: "cde"
+        producers:
+          - name: "goldengate"
+            external: true    
+      - name: "ogg-way4-validated-doc" # Name: transaction-card-validator-ogg-way4-validated-doc
+        partitions: 3
+        replication_factor: 3
+        retention_ms: 604800000 # 7 days
+        retention_bytes: -1 # No limit
+        consumers:
+          - name: "transaction-card-validator"
+            scope: "cde"
+          - name: "sally-card-tokenizer"
+            scope: "cde"
+        producers:
+          - name: "transaction-card-validator"
+            scope: "cde"
+      - name: "connect-solar-raw-afterProcessTxn" # Name: transaction-card-validator-connect-solar-raw-afterProcessTxn
+        partitions: 3
+        replication_factor: 3
+        retention_ms: 604800000 # 7 days
+        retention_bytes: -1 # No limit
+        consumers:
+          - name: "transaction-card-validator"
+            scope: "cde"
+        producers:
+          - name: "saltdata-kafka-connect"
+            scope: "cde"
+      - name: "connect-solar-validated-afterProcessTxn" # Name: transaction-card-validator-connect-solar-validated-afterProcessTxn
+        partitions: 3
+        replication_factor: 3
+        retention_ms: 604800000 # 7 days
+        retention_bytes: -1 # No limit
+        consumers:
+          - name: "transaction-card-validator"
+            scope: "cde"
+          - name: "sally-card-tokenizer"
+            scope: "cde"
+        producers:
+          - name: "transaction-card-validator"
+            scope: "cde"
+  - cluster: "eventstreaming"
+    scope: "platform"
+    topics:
+      - name: "ogg-way4-curated-doc" # Name: transaction-card-validator-ogg-way4-curated-doc
+        partitions: 3
+        replication_factor: 3
+        retention_ms: 604800000 # 7 days
+        retention_bytes: -1 # No limit
+        consumers:
+          - name: "transaction-card-validator"
+            scope: "cde"
+          - name: "transaction-api-operational"
+            scope: "platform"
+        producers:
+          - name: "transaction-card-validator"
+            scope: "cde"
+      - name: "connect-solar-curated-afterProcessTxn" # Name: transaction-card-validator-connect-solar-curated-afterProcessTxn
+        partitions: 3
+        replication_factor: 3
+        retention_ms: 604800000 # 7 days
+        retention_bytes: -1 # No limit
+        consumers:
+          - name: "transaction-card-validator"
+            scope: "cde"
+          - name: "transaction-api-operational"
+            scope: "platform"
+        producers:
+          - name: "transaction-card-validator"
+            scope: "cde"
+      - name: "solar-validated-afterInvoiceIssuing" # Name: transaction-card-validator-solar-validated-afterInvoiceIssuing
+        partitions: 3
+        replication_factor: 3
+        retention_ms: 604800000 # 7 days
+        retention_bytes: -1 # No limit        
+        producers:
+          - name: "transaction-card-validator"
+            scope: "cde"
+        consumers:
+          - name: "payout-instruction-handler"
+            scope: "platform"
+          - name: "saltdata-platform-kowl"
+            scope: "platform"
+      - name: "reconciliation-canonical" # Name: transaction-card-validator-reconciliation-canonical
+        partitions: 3
+        replication_factor: 3
+        retention_ms: 604800000 # 7 days
+        retention_bytes: -1 # No limit
+        producers:
+          - name: "transaction-card-validator"
+            scope: "cde"
+        consumers:
+          - name: "saltdata-platform-kowl"
+            scope: "platform"
+          - name: "financials-way4-cas"
+            scope: "platform"

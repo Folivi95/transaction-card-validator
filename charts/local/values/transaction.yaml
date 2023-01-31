@@ -1,0 +1,59 @@
+environment: dev
+
+validator:
+  fullnameOverride: "transaction-card-validator"
+  serviceAccount:
+    create: true
+    name: "transaction-card-validator"
+  image:
+    repository: ~
+    tag: ~
+    pullPolicy: IfNotPresent
+
+  resources:
+    limits:
+      cpu: 1
+      memory: 512Mi
+    requests:
+      cpu: 1
+      memory: 256Mi
+  
+  service:
+    type: ClusterIP
+    port: 8080
+    health:
+      live: /internal/health_check
+      ready: /internal/health_check
+
+  services:
+    - name: test-ingress
+      replicaCount: 3
+      ingress_topic: transaction-card-validator-test-ingress
+      ingress_msk_secret: transaction-card-validator-msk-eventstreaming
+      egress_topic: transaction-card-validator-test-egress
+      egress_msk_secret: transaction-card-validator-msk-eventstreaming
+      s3_bucket: transactions-test-quarantine
+      business_validation: none
+      pause_processing: false
+      schema:
+        registryEndpoint: http://saltdata-cp-schema-registry:8081
+        refreshIntervalSeconds: 30
+        subjectName: test_transaction-v1
+      customEnv:
+        S3_DISABLE_SSL: true
+        S3_ENDPOINT: http://minio:9000
+        S3_REGION: us-east-1
+        S3_FORCE_PATH_STYLE: true
+        AWS_ACCESS_KEY_ID: minio
+        AWS_SECRET_ACCESS_KEY: minio123
+
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+
+  pdb:
+    enabled: false
+    maxUnavailable: 1
+
+deployment:
+  local: true

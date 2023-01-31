@@ -1,0 +1,24 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: e2e-tests
+  labels:
+    app: e2e-tests
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app: e2e-tests
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: e2e-tests
+        image: e2e-tests
+        env:
+        - name: CONSUMER_KAFKA_ENDPOINT
+          value: "kafka:9092"
+        - name: CONSUMER_KAFKA_TOPIC
+          value: "transaction-card-validator-test-ingress"
+        - name: PRODUCER_KAFKA_TOPIC
+          value: "transaction-card-validator-test-egress"

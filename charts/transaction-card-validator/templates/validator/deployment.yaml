@@ -1,0 +1,136 @@
+{{- range $validator := $.Values.validator.services }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "transaction-card-validator.fullname" $ }}-{{ $validator.name }}
+  labels:
+    app.kubernetes.io/name: {{ include "transaction-card-validator.name" $ }}-{{ $validator.name }}
+    app.kubernetes.io/instance: {{ $.Release.Name }}
+    app.kubernetes.io/part-of: {{ include "transaction-card-validator.name" $ }}
+spec:
+  replicas: {{ $validator.replicaCount }}
+
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "transaction-card-validator.name" $ }}-{{ $validator.name }}
+      app.kubernetes.io/instance: {{ $.Release.Name }}
+  template:
+    metadata:
+      {{- with $validator.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        app.kubernetes.io/name: {{ include "transaction-card-validator.name" $ }}-{{ $validator.name }}
+        app.kubernetes.io/instance: {{ $.Release.Name }}
+        app.kubernetes.io/part-of: {{ include "transaction-card-validator.name" $ }}
+    spec:
+      {{- with $.Values.validator.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "transaction-card-validator.serviceAccountName" $ }}
+      securityContext:
+        {{- toYaml $.Values.validator.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ $.Chart.Name }}-{{ $validator.name }}
+          securityContext:
+            {{- toYaml $.Values.validator.securityContext | nindent 12 }}
+          image: "{{ $.Values.validator.image.repository | default $.Chart.Name }}:{{ $.Values.validator.image.tag | default $.Chart.AppVersion }}"
+          imagePullPolicy: {{ $.Values.validator.image.pullPolicy | default "IfNotPresent" }}
+          ports:
+            - name: http
+              containerPort: {{ $.Values.validator.service.port }}
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: {{ $.Values.validator.service.health.live }}
+              port: http
+          readinessProbe:
+            httpGet:
+              path: {{ $.Values.validator.service.health.ready }}
+              port: http
+          resources:
+            {{- toYaml $.Values.validator.resources | nindent 12 }}
+          env:
+            - name: LOG_LEVEL
+              value: "{{ $.Values.validator.logs.level }}"
+            - name: AUDIT_LOG_FIELDS
+              value: "{{ $.Values.validator.logs.audit_log_fields }}"
+            - name: CONSUMER_KAFKA_ENDPOINT
+              valueFrom:
+                secretKeyRef:
+                  name: "{{ $validator.ingress_msk_secret }}"
+                  key: endpoint
+            - name: CONSUMER_KAFKA_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: "{{ $validator.ingress_msk_secret }}"
+                  key: username
+            - name:  CONSUMER_KAFKA_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: "{{ $validator.ingress_msk_secret }}"
+                  key: password
+            - name: CONSUMER_KAFKA_TOPIC
+              value: "{{ $validator.ingress_topic }}"
+            - name: PRODUCER_KAFKA_ENDPOINT
+              valueFrom:
+                secretKeyRef:
+                  name: "{{ $validator.egress_msk_secret }}"
+                  key: endpoint
+            - name: PRODUCER_KAFKA_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: "{{ $validator.egress_msk_secret }}"
+                  key: username
+            - name: PRODUCER_KAFKA_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: "{{ $validator.egress_msk_secret }}"
+                  key: password
+            - name: PRODUCER_KAFKA_TOPIC
+              value: "{{ $validator.egress_topic }}"
+            - name: REGISTRY_ENDPOINT
+              value: "{{ $validator.schema.registryEndpoint }}"
+            - name: REGISTRY_REFRESH_TIME_SECONDS
+              value: "{{ $validator.schema.refreshIntervalSeconds }}"
+            - name: REGISTRY_SUBJECT_NAME
+              value: "{{ $validator.schema.subjectName }}"
+            - name: S3_BUCKET
+              value: "{{ $validator.s3_bucket }}-{{ $.Values.environment }}"
+            - name: CARD_HOLD_KEYS
+              value: "{{ $validator.card_hold_keys }}"
+            - name: SKIP_VALIDATION
+              value: "{{ $validator.skip_validation | default false }}"
+            - name: BUSINESS_VALIDATION
+              value: {{ $validator.business_validation | default "none" }}
+            - name: PAUSE_PROCESSING
+              value: "{{ $validator.pause_processing | default false }}"
+          {{- range $key, $value := $validator.customEnv }}
+            - name: {{ $key | quote }}
+              value: {{ $value | quote }}
+          {{- end }}
+      {{- with $.Values.validator.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $.Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $.Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $.Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

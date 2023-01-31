@@ -1,0 +1,141 @@
+---
+version: '2'
+services:
+  validator:
+    scale: 3
+    build:
+      context: .
+    depends_on:
+      init_schema:
+        condition: service_completed_successfully
+      minio:
+        condition: service_healthy
+    volumes:
+      - .:/build
+    environment:
+      LOG_LEVEL: "WARN"
+      KAFKA_ENDPOINT: broker:29092
+      KAFKA_USERNAME:
+      KAFKA_PASSWORD:
+      KAFKA_INGRESS_TOPIC: way4.raw.doc
+      KAFKA_EGRESS_TOPIC: way4.validated.doc
+      REGISTRY_ENDPOINT: http://schema-registry:8081
+      REGISTRY_SUBJECT_NAME: way4.raw.doc-value
+      S3_ENDPOINT: http://minio:9000
+      S3_REGION: us-east-1
+      S3_BUCKET: transactions-way4-quarantine
+      S3_DISABLE_SSL: "true"
+      S3_FORCE_PATH_STYLE: "true"
+      AWS_ACCESS_KEY_ID: admin
+      AWS_SECRET_ACCESS_KEY: admin123
+      CARD_HOLD_KEYS: CARD_HOLD_NUMBER1,CARD_HOLD_NUMBER2
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:6.2.0
+    hostname: zookeeper
+    container_name: zookeeper
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+
+  broker:
+    image: confluentinc/cp-kafka:6.2.0
+    hostname: broker
+    container_name: broker
+    depends_on:
+      - zookeeper
+    ports:
+      - "29092:29092"
+      - "9092:9092"
+      - "9101:9101"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: 'zookeeper:2181'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://broker:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_CONFLUENT_SCHEMA_REGISTRY_URL: http://schema-registry:8081
+    
+  init_topics:
+    image: confluentinc/cp-kafka:6.2.0
+    depends_on:
+      - broker
+    entrypoint: [ '/bin/sh', '-c' ]
+    command: |
+      "
+      # blocks until kafka is reachable
+      kafka-topics --bootstrap-server broker:29092 --list
+
+      echo -e 'Creating kafka topics'
+      kafka-topics --bootstrap-server broker:29092 --create --if-not-exists --topic way4.raw.doc --replication-factor 1 --partitions 3
+      kafka-topics --bootstrap-server broker:29092 --create --if-not-exists --topic way4.validated.doc --replication-factor 1 --partitions 3
+      "
+
+  schema-registry:
+    image: confluentinc/cp-schema-registry:6.2.0
+    hostname: schema-registry
+    container_name: schema-registry
+    depends_on:
+      - broker
+    ports:
+      - "8081:8081"
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: 'broker:29092'
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+    healthcheck:
+      test: ["CMD", "curl", "-f", "localhost:8081/subjects"]
+      interval: 1m30s
+      timeout: 5s
+      retries: 3
+  
+  init_schema:
+    image: alpine:latest
+    container_name: init_schema
+    volumes:
+      - ./scripts:/scripts
+    depends_on:
+      schema-registry:
+        condition: service_healthy
+    entrypoint: [ "sh", "scripts/add_schema.sh" ]
+  
+  minio:
+    image: minio/minio
+    container_name: minio
+    hostname: minio
+    environment:
+      - MINIO_ROOT_USER=admin
+      - MINIO_ROOT_PASSWORD=admin123
+      - MINIO_REGION_NAME=us-east-1
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    command: server /data --console-address ":9001"
+    volumes:
+      - ${PWD}/data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+  
+  init_bucket:
+    image: minio/mc:latest
+    container_name: init_bucket
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c '
+      sleep 5;
+      /usr/bin/mc config host add s3 http://minio:9000 admin admin123 --api S3v4;
+      [[ ! -z "`/usr/bin/mc ls s3 | grep transactions-way4-quarantine`" ]] || /usr/bin/mc mb s3/transactions-way4-quarantine;
+      exit 0;
+      '
+
+volumes:
+  data:
